@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = "build"
+  
+[dev]
+  command = "npm start"
+  publish = "build"
+
+[build.environment]
+  NODE_ENV = "production"
+  
+[[redirects]]
+  from = "/old-path"
+  to = "/new-path"
+  status = 301
