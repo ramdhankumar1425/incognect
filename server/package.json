@@ -1,0 +1,16 @@
+{
+    "name": "server",
+    "version": "1.0.0",
+    "description": "Socket.io server for incognect",
+    "main": "src/server.js",
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "node --watch src/server.js"
+    },
+    "author": "ramdhankumar1425",
+    "license": "ISC",
+    "dependencies": {
+        "dotenv": "^16.4.7",
+        "socket.io": "^4.8.1"
+    }
+}
