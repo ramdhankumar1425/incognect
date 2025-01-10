@@ -37,12 +37,25 @@ function Stream() {
             {/* Local Stream */}
             {localMedia && (
                 <div className="absolute top-3 left-3 w-[100px] sm:w-[150px] md:w-[200px] lg:w-[250px] aspect-video bg-gray-800 border border-gray-700 rounded-lg overflow-hidden flex items-center justify-center">
-                    <ReactPlayer
+                    {/* <ReactPlayer
+                        id="localVideo"
                         playing
                         muted
                         url={localMedia}
                         style={{ maxWidth: "100%", maxHeight: "100%" }}
-                    />
+                    /> */}
+                    <video
+                        id="localVideo"
+                        muted
+                        autoPlay
+                        playsInline
+                        style={{ maxWidth: "100%", maxHeight: "100%" }}
+                        ref={(video) => {
+                            if (video && localMedia) {
+                                video.srcObject = localMedia;
+                            }
+                        }}
+                    ></video>
                 </div>
             )}
 

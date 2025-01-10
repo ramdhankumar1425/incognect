@@ -1,6 +1,6 @@
 const Peer = require("./Peer");
 
-let peers = new Map();
+let peers = new Map(); // in-memory store of all the peers
 
 const socketHandler = (io) => {
     io.on("connection", (socket) => {
@@ -11,9 +11,34 @@ const socketHandler = (io) => {
 
         io.emit("onlinePeerCount", { count: peers.size });
 
-        socket.on("offer", async function ({ offer }, cb) {
+        socket.on("getPartner", async function (_, cb) {
             try {
-                peers.get(socket.id).setOffer(offer);
+                peers.forEach((peer) => {
+                    if (peer.id === socket.id || !peer.isReady()) return;
+
+                    // connect this socket with peer
+                    io.to(socket.id).emit("partnerFound", {
+                        partnerId: peer.id,
+                    });
+                    io.to(peer.id).emit("partnerFound", {
+                        partnerId: socket.id,
+                    });
+
+                    io.to(socket.id).emit("getOffer");
+                });
+            } catch (error) {
+                console.error("Error in getting partner event:", error);
+
+                cb({
+                    success: false,
+                    error,
+                });
+            }
+        });
+
+        socket.on("offer", async function ({ offer, targetId }, cb) {
+            try {
+                io.to(targetId).emit("offer", { offer });
 
                 cb({
                     success: true,
@@ -30,7 +55,7 @@ const socketHandler = (io) => {
 
         socket.on("answer", async function ({ answer, targetId }, cb) {
             try {
-                io.to(targetId).emit("answer", { answer, peerId: socket.id });
+                io.to(targetId).emit("answer", { answer });
 
                 cb({ success: true });
             } catch (error) {
@@ -43,57 +68,13 @@ const socketHandler = (io) => {
             }
         });
 
-        socket.on("iceCandidate", async function ({ candidate }, cb) {
+        socket.on("iceCandidate", async function ({ candidate, targetId }, cb) {
             try {
-                peers.get(socket.id).addIceCandidate(candidate);
+                io.to(targetId).emit("iceCandidate", { candidate });
 
                 cb({ success: true });
             } catch (error) {
                 console.error("Error in adding iceCandidate event:", error);
-
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-        });
-
-        socket.on("createConnection", function (_, cb) {
-            try {
-                peers.forEach((peer) => {
-                    if (peer.id !== socket.id && peer.isReady()) {
-                        console.log("Connecting....");
-                        const offer = peer.getOffer();
-
-                        socket.emit("offer", { offer, peerId: peer.id });
-
-                        return;
-                    }
-                });
-
-                cb({
-                    success: true,
-                });
-            } catch (error) {
-                console.error("Error in createConnection event:", error);
-
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-            // send offer
-        });
-
-        socket.on("getIceCandidates", async function ({ peerId }, cb) {
-            try {
-                const iceCandidates = peers.get(peerId).getIceCandidates();
-
-                iceCandidates.forEach((candidate) => {
-                    socket.emit("iceCandidate", { candidate });
-                });
-            } catch (error) {
-                console.error("Error in getting iceCandidates event:", error);
 
                 cb({
                     success: false,

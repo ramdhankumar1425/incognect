@@ -8,6 +8,7 @@ import {
     useState,
 } from "react";
 import { io } from "socket.io-client";
+import * as nsfwjs from "nsfwjs";
 
 const PeerConnectionContext = createContext();
 
@@ -56,14 +57,15 @@ export const PeerConnectionProvider = ({ children }) => {
             });
 
             setLocalMedia(stream);
-
-            return stream;
         } catch (error) {
             console.error("Error in getting local media:", error);
         }
     }, []);
 
-    const connect = useCallback(async () => {
+    const getPartner = useCallback(async () => {
+        if (!socketRef.current) initSocket();
+        if (!localMedia) await getLocalMedia();
+
         setIsLoading(true);
 
         if (peerConnectionRef.current) peerConnectionRef.current.close();
@@ -73,42 +75,22 @@ export const PeerConnectionProvider = ({ children }) => {
         setRemoteMedia(null);
         setChats([]);
 
-        if (!socketRef.current) {
-            initSocket();
-        }
-
-        // create RTCPeerConnection
-        const pc = new RTCPeerConnection(configuration);
-        peerConnectionRef.current = pc;
-
-        // attach local media to peer connection
-        const stream = await getLocalMedia();
-
-        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-        // create offer
-        const offer = await pc.createOffer();
-
-        // set local description
-        await pc.setLocalDescription(offer);
-
-        await emitSocketEvent("offer", { offer });
-
-        await emitSocketEvent("createConnection");
+        await emitSocketEvent("getPartner");
     }, [
         socketRef.current,
-        emitSocketEvent,
-        getLocalMedia,
         initSocket,
+        localMedia,
+        getLocalMedia,
         peerConnectionRef.current,
+        emitSocketEvent,
     ]);
 
     const leave = useCallback(() => {
-        if (socketRef.current) socketRef.current.disconnect();
+        // if (socketRef.current) socketRef.current.disconnect();
         if (peerConnectionRef.current) peerConnectionRef.current.close();
         if (localMedia) localMedia.getTracks().forEach((track) => track.stop());
 
-        socketRef.current = null;
+        // socketRef.current = null;
         peerConnectionRef.current = null;
         setLocalMedia(null);
         setRemoteMedia(null);
@@ -138,10 +120,76 @@ export const PeerConnectionProvider = ({ children }) => {
         [partnerIdRef.current, emitSocketEvent]
     );
 
+    const moderateLocalMedia = useCallback(async () => {
+        if (!localMedia) return;
+
+        const localVideo = document.getElementById("localVideo");
+        const model = await nsfwjs.load("MobileNetV2");
+
+        const interval = setInterval(async () => {
+            // Classify the image
+            const predictions = await model.classify(localVideo);
+
+            let isInAppropriate = false;
+
+            predictions.forEach((prediction) => {
+                if (
+                    prediction.className === "Porn" &&
+                    prediction.probability > 0.65
+                ) {
+                    isInAppropriate = true;
+                    return;
+                }
+            });
+
+            if (isInAppropriate) {
+                // inappropriate content detected
+                leave();
+
+                alert("Inappropriate content detected.");
+            }
+        }, 5000);
+
+        return interval;
+    }, [localMedia, emitSocketEvent, leave]);
+
     // socket event handler
+    const handlePartnerFound = useCallback(
+        async ({ partnerId }) => {
+            partnerIdRef.current = partnerId;
+
+            // create RTCPeerConnection
+            const pc = new RTCPeerConnection(configuration);
+            peerConnectionRef.current = pc;
+
+            pc.onicecandidate = pcEventIceCandidate;
+            pc.ontrack = pcEventTrack;
+            pc.onconnectionstatechange = pcEventConnectionStateChange;
+
+            // attach local media to peer connection
+            if (localMedia)
+                localMedia
+                    .getTracks()
+                    .forEach((track) => pc.addTrack(track, localMedia));
+        },
+        [localMedia]
+    );
+
+    const handleGetOffer = useCallback(async () => {
+        if (!partnerIdRef.current || !peerConnectionRef.current) return;
+
+        const offer = await peerConnectionRef.current.createOffer();
+        await peerConnectionRef.current.setLocalDescription(offer);
+
+        await emitSocketEvent("offer", {
+            offer,
+            targetId: partnerIdRef.current,
+        });
+    }, [partnerIdRef.current, peerConnectionRef.current, emitSocketEvent]);
+
     const handleOffer = useCallback(
-        async ({ offer, peerId }) => {
-            if (!peerConnectionRef.current) return;
+        async ({ offer }) => {
+            if (!partnerIdRef.current || !peerConnectionRef.current) return;
 
             await peerConnectionRef.current.setRemoteDescription(
                 new RTCSessionDescription(offer)
@@ -150,39 +198,34 @@ export const PeerConnectionProvider = ({ children }) => {
             const answer = await peerConnectionRef.current.createAnswer();
             await peerConnectionRef.current.setLocalDescription(answer);
 
-            await emitSocketEvent("answer", { answer, targetId: peerId });
-
-            partnerIdRef.current = peerId;
-
-            await emitSocketEvent("getIceCandidates", { peerId });
+            await emitSocketEvent("answer", {
+                answer,
+                targetId: partnerIdRef.current,
+            });
         },
-        [emitSocketEvent, peerConnectionRef.current]
+        [partnerIdRef.current, peerConnectionRef.current, emitSocketEvent]
     );
 
     const handleAnswer = useCallback(
-        async ({ answer, peerId }) => {
-            if (!peerConnectionRef.current) return;
+        async ({ answer }) => {
+            if (!partnerIdRef.current || !peerConnectionRef.current) return;
 
             await peerConnectionRef.current.setRemoteDescription(
                 new RTCSessionDescription(answer)
             );
-
-            partnerIdRef.current = peerId;
-
-            await emitSocketEvent("getIceCandidates", { peerId });
         },
-        [emitSocketEvent, peerConnectionRef.current]
+        [partnerIdRef.current, peerConnectionRef.current]
     );
 
     const handleIceCandidate = useCallback(
         async ({ candidate }) => {
-            if (!peerConnectionRef.current) return;
+            if (!partnerIdRef.current || !peerConnectionRef.current) return;
 
             if (candidate) {
                 await peerConnectionRef.current.addIceCandidate(candidate);
             }
         },
-        [peerConnectionRef.current]
+        [partnerIdRef.current, peerConnectionRef.current]
     );
 
     const handleChat = useCallback(({ text }) => {
@@ -201,16 +244,21 @@ export const PeerConnectionProvider = ({ children }) => {
         if (count) setOnlinePeerCount(count);
     }, []);
 
+    const handlePartnerDisconnected = useCallback(() => {
+        getPartner();
+    }, [getPartner]);
+
     // peer connection event handlers
     const pcEventIceCandidate = useCallback(
         async (event) => {
-            if (event.candidate) {
+            if (partnerIdRef.current && event.candidate) {
                 await emitSocketEvent("iceCandidate", {
                     candidate: event.candidate,
+                    targetId: partnerIdRef.current,
                 });
             }
         },
-        [emitSocketEvent]
+        [partnerIdRef.current, emitSocketEvent]
     );
 
     const pcEventTrack = useCallback(async (event) => {
@@ -228,83 +276,68 @@ export const PeerConnectionProvider = ({ children }) => {
         } else if (connectionState === "disconnected") {
             emitSocketEvent("disconnected");
 
-            connect();
+            getPartner();
         }
     }, [
-        emitSocketEvent,
-        connect,
+        peerConnectionRef.current,
         partnerIdRef.current,
-        peerConnectionRef.current,
-    ]);
-
-    // peer connection event listener
-    useEffect(() => {
-        if (!peerConnectionRef.current) return;
-
-        peerConnectionRef.current.addEventListener(
-            "icecandidate",
-            pcEventIceCandidate
-        );
-        peerConnectionRef.current.addEventListener("track", pcEventTrack);
-        peerConnectionRef.current.addEventListener(
-            "connectionstatechange",
-            pcEventConnectionStateChange
-        );
-
-        return () => {
-            if (!peerConnectionRef.current) return;
-
-            peerConnectionRef.current.removeEventListener(
-                "icecandidate",
-                pcEventIceCandidate
-            );
-            peerConnectionRef.current.removeEventListener(
-                "track",
-                pcEventTrack
-            );
-            peerConnectionRef.current.removeEventListener(
-                "connectionstatechange",
-                pcEventConnectionStateChange
-            );
-        };
-    }, [
-        peerConnectionRef.current,
-        pcEventIceCandidate,
-        pcEventTrack,
-        pcEventConnectionStateChange,
+        emitSocketEvent,
+        getPartner,
     ]);
 
     // socket event listeners
     useEffect(() => {
         if (!socketRef.current) return;
 
+        socketRef.current.on("partnerFound", handlePartnerFound);
+        socketRef.current.on("getOffer", handleGetOffer);
         socketRef.current.on("offer", handleOffer);
         socketRef.current.on("answer", handleAnswer);
         socketRef.current.on("iceCandidate", handleIceCandidate);
         socketRef.current.on("chat", handleChat);
         socketRef.current.on("onlinePeerCount", handleOnlinePeerCount);
+        socketRef.current.on("partnerDisconnected", handlePartnerDisconnected);
 
         return () => {
             if (!socketRef.current) return;
 
+            socketRef.current.off("partnerFound", handlePartnerFound);
+            socketRef.current.off("getOffer", handleGetOffer);
             socketRef.current.off("offer", handleOffer);
             socketRef.current.off("answer", handleAnswer);
             socketRef.current.off("iceCandidate", handleIceCandidate);
             socketRef.current.off("chat", handleChat);
             socketRef.current.off("onlinePeerCount", handleOnlinePeerCount);
+            socketRef.current.off(
+                "partnerDisconnected",
+                handlePartnerDisconnected
+            );
         };
     }, [
         socketRef.current,
+        handlePartnerFound,
+        handleGetOffer,
         handleOffer,
         handleAnswer,
         handleIceCandidate,
         handleChat,
         handleOnlinePeerCount,
+        handlePartnerDisconnected,
     ]);
+
+    // to moderate the video that is being shared
+    useEffect(() => {
+        if (!localMedia) return;
+
+        const interval = moderateLocalMedia();
+
+        return () => clearInterval(interval);
+    }, [localMedia, moderateLocalMedia]);
 
     const contextValue = useMemo(
         () => ({
-            connect,
+            socketRef,
+            getPartner,
             leave,
             localMedia,
             remoteMedia,
@@ -313,10 +346,10 @@ export const PeerConnectionProvider = ({ children }) => {
             sendChat,
             partnerIdRef,
             onlinePeerCount,
-            socketRef,
         }),
         [
-            connect,
+            socketRef,
+            getPartner,
             leave,
             localMedia,
             remoteMedia,
@@ -325,7 +358,6 @@ export const PeerConnectionProvider = ({ children }) => {
             sendChat,
             partnerIdRef,
             onlinePeerCount,
-            socketRef,
         ]
     );
 

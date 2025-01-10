@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { usePeerConnection } from "../context/PeerConnectionProvider";
 
 function Toolbar() {
-    const { connect, leave } = usePeerConnection();
+    const { leave, getPartner } = usePeerConnection();
     const navigate = useNavigate();
 
     return (
@@ -21,7 +21,7 @@ function Toolbar() {
 
             {/* Next Button */}
             <button
-                onClick={() => connect()}
+                onClick={() => getPartner()}
                 className="flex items-center px-2.5 py-1 sm:px-4 sm:py-1.5 md:px-6 md:py-2 text-sm md:text-base bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none transition-all duration-200 ease-in-out"
             >
                 <span className="font-semibold">Next</span>
