@@ -135,7 +135,7 @@ export const PeerConnectionProvider = ({ children }) => {
             predictions.forEach((prediction) => {
                 if (
                     prediction.className === "Porn" &&
-                    prediction.probability > 0.65
+                    prediction.probability > 0.8
                 ) {
                     isInAppropriate = true;
                     return;
