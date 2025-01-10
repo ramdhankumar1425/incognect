@@ -7,7 +7,6 @@ import {
     useRef,
     useState,
 } from "react";
-import { io } from "socket.io-client";
 import * as nsfwjs from "nsfwjs";
 
 const PeerConnectionContext = createContext();
@@ -31,7 +30,9 @@ export const PeerConnectionProvider = ({ children }) => {
 
     const [onlinePeerCount, setOnlinePeerCount] = useState(0);
 
-    const initSocket = useCallback(() => {
+    const initSocket = useCallback(async () => {
+        const { io } = await import("socket.io-client");
+
         const socket = io(import.meta.env.VITE_SERVER_URI);
 
         socketRef.current = socket;
@@ -124,7 +125,10 @@ export const PeerConnectionProvider = ({ children }) => {
         if (!localMedia) return;
 
         const localVideo = document.getElementById("localVideo");
-        const model = await nsfwjs.load("MobileNetV2");
+
+        const model = await nsfwjs.load(
+            `${window.location.origin}/nsfwjs/models/mobilenet_v2/model.json`
+        );
 
         const interval = setInterval(async () => {
             // Classify the image

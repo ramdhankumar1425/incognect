@@ -1,27 +1,34 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { PeerConnectionProvider } from "./context/PeerConnectionProvider";
-import HomePage from "./pages/HomePage";
-import ChatPage from "./pages/ChatPage";
-import NotFoundPage from "./pages/NotFoundPage";
+const HomePage = lazy(() => import("./pages/HomePage"));
+const ChatPage = lazy(() => import("./pages/ChatPage"));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
+import FallbackLoading from "./components/FallbackLoading";
 
 function App() {
     return (
         <>
             <BrowserRouter>
                 <Routes>
-                    <Route path="/">
-                        <Route index element={<HomePage />} />
-                        <Route
-                            path="chat"
-                            element={
-                                <PeerConnectionProvider>
-                                    <ChatPage />
-                                </PeerConnectionProvider>
-                            }
-                        />
+                    <Route path="/" element={<HomePage />} />
 
-                        <Route path="*" element={<NotFoundPage />} />
-                    </Route>
+                    <Route
+                        path="chat"
+                        element={
+                            <Suspense fallback={<FallbackLoading />}>
+                                <ChatPage />
+                            </Suspense>
+                        }
+                    />
+
+                    <Route
+                        path="*"
+                        element={
+                            <Suspense fallback={<FallbackLoading />}>
+                                <NotFoundPage />
+                            </Suspense>
+                        }
+                    />
                 </Routes>
             </BrowserRouter>
         </>
