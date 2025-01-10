@@ -1,5 +1,4 @@
 import React from "react";
-import ReactPlayer from "react-player";
 import Toolbar from "./Toolbar";
 import { usePeerConnection } from "../context/PeerConnectionProvider";
 import { Commet } from "react-loading-indicators";
@@ -25,10 +24,16 @@ function Stream() {
                     }}
                 >
                     {remoteMedia && (
-                        <ReactPlayer
-                            playing
-                            url={remoteMedia}
+                        <video
+                            id="remoteVideo"
+                            autoPlay
+                            playsInline
                             style={{ maxWidth: "100%", maxHeight: "100%" }}
+                            ref={(video) => {
+                                if (video && video.srcObject !== remoteMedia) {
+                                    video.srcObject = remoteMedia;
+                                }
+                            }}
                         />
                     )}
                 </div>
@@ -37,13 +42,6 @@ function Stream() {
             {/* Local Stream */}
             {localMedia && (
                 <div className="absolute top-3 left-3 w-[100px] sm:w-[150px] md:w-[200px] lg:w-[250px] aspect-video bg-gray-800 border border-gray-700 rounded-lg overflow-hidden flex items-center justify-center">
-                    {/* <ReactPlayer
-                        id="localVideo"
-                        playing
-                        muted
-                        url={localMedia}
-                        style={{ maxWidth: "100%", maxHeight: "100%" }}
-                    /> */}
                     <video
                         id="localVideo"
                         muted
@@ -51,11 +49,11 @@ function Stream() {
                         playsInline
                         style={{ maxWidth: "100%", maxHeight: "100%" }}
                         ref={(video) => {
-                            if (video && localMedia) {
+                            if (video && video.srcObject !== localMedia) {
                                 video.srcObject = localMedia;
                             }
                         }}
-                    ></video>
+                    />
                 </div>
             )}
 
