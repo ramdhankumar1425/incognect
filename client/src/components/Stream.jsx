@@ -1,7 +1,7 @@
 import React from "react";
 import Toolbar from "./Toolbar";
 import { usePeerConnection } from "../context/PeerConnectionProvider";
-import { Commet } from "react-loading-indicators";
+import { OrbitProgress } from "react-loading-indicators";
 
 function Stream() {
     const { localMedia, remoteMedia, isLoading, onlinePeerCount } =
@@ -12,7 +12,12 @@ function Stream() {
             {/* Remote Stream */}
             {isLoading ? (
                 <div className="w-full h-full flex items-center justify-center">
-                    <Commet color="#32cd32" size="small" speedPlus={2} />
+                    <OrbitProgress
+                        color="#d1d5db"
+                        size="small"
+                        text=""
+                        textColor=""
+                    />
                 </div>
             ) : (
                 <div

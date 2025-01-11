@@ -1,142 +1,50 @@
 const Peer = require("./Peer");
-
-let peers = new Map(); // in-memory store of all the peers
+const peerStore = require("./store/peerStore");
+const {
+    handleGetPartner,
+    handleOffer,
+    handleAnswer,
+    handleIceCandidate,
+    handleConnected,
+    handleDisconnected,
+    handleChat,
+} = require("./controllers/socket.controllers");
 
 const socketHandler = (io) => {
     io.on("connection", (socket) => {
-        console.log("Socket connected:", socket.id);
-
         // store the peer
-        peers.set(socket.id, new Peer(socket.id));
+        peerStore.set(socket.id, new Peer(socket.id));
 
-        io.emit("onlinePeerCount", { count: peers.size });
+        io.emit("onlinePeerCount", { count: peerStore.size });
+        console.log("Online Peers:", peerStore.size);
 
-        socket.on("getPartner", async function (_, cb) {
-            try {
-                peers.forEach((peer) => {
-                    if (peer.id === socket.id || !peer.isReady()) return;
+        socket.on("getPartner", (data, cb) =>
+            handleGetPartner(io, socket, data, cb)
+        );
 
-                    // connect this socket with peer
-                    io.to(socket.id).emit("partnerFound", {
-                        partnerId: peer.id,
-                    });
-                    io.to(peer.id).emit("partnerFound", {
-                        partnerId: socket.id,
-                    });
+        socket.on("offer", (data, cb) => handleOffer(io, socket, data, cb));
 
-                    io.to(socket.id).emit("getOffer");
-                });
-            } catch (error) {
-                console.error("Error in getting partner event:", error);
+        socket.on("answer", (data, cb) => handleAnswer(io, socket, data, cb));
 
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-        });
+        socket.on("iceCandidate", (data, cb) =>
+            handleIceCandidate(io, socket, data, cb)
+        );
 
-        socket.on("offer", async function ({ offer, targetId }, cb) {
-            try {
-                io.to(targetId).emit("offer", { offer });
+        socket.on("connected", (data, cb) =>
+            handleConnected(io, socket, data, cb)
+        );
 
-                cb({
-                    success: true,
-                });
-            } catch (error) {
-                console.error("Error in offer event:", error);
+        socket.on("disconnected", (data, cb) =>
+            handleDisconnected(io, socket, data, cb)
+        );
 
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-        });
-
-        socket.on("answer", async function ({ answer, targetId }, cb) {
-            try {
-                io.to(targetId).emit("answer", { answer });
-
-                cb({ success: true });
-            } catch (error) {
-                console.error("Error in answer event:", error);
-
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-        });
-
-        socket.on("iceCandidate", async function ({ candidate, targetId }, cb) {
-            try {
-                io.to(targetId).emit("iceCandidate", { candidate });
-
-                cb({ success: true });
-            } catch (error) {
-                console.error("Error in adding iceCandidate event:", error);
-
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-        });
-
-        socket.on("connected", function ({ partnerId }, cb) {
-            try {
-                peers.get(socket.id).connect(partnerId);
-
-                cb({
-                    success: true,
-                });
-            } catch (error) {
-                console.error("Error in setting connection state:", error);
-
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-        });
-
-        socket.on("disconnected", function (_, cb) {
-            try {
-                peers.get(socket.id).disconnect();
-
-                cb({
-                    success: true,
-                });
-            } catch (error) {
-                console.error("Error in setting connection state:", error);
-
-                cb({
-                    success: false,
-                    error,
-                });
-            }
-        });
-
-        socket.on("chat", function ({ text, targetId }, cb) {
-            try {
-                io.to(targetId).emit("chat", { text });
-
-                cb({
-                    success: true,
-                });
-            } catch (error) {
-                console.error("Error in sending chat:", error);
-
-                cb({ success: false, error });
-            }
-        });
+        socket.on("chat", (data, cb) => handleChat(io, socket, data, cb));
 
         socket.on("disconnect", () => {
-            console.log("Socket disconnected:", socket.id);
+            if (peerStore.has(socket.id)) peerStore.delete(socket.id);
 
-            if (peers.has(socket.id)) peers.delete(socket.id);
-
-            io.emit("onlinePeerCount", { count: peers.size });
+            io.emit("onlinePeerCount", { count: peerStore.size });
+            console.log("Online Peers:", peerStore.size);
         });
     });
 };

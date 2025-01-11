@@ -7,48 +7,34 @@ import {
     useRef,
     useState,
 } from "react";
-import { io } from "socket.io-client";
 import * as nsfwjs from "nsfwjs";
+import { toast } from "sonner";
+import {
+    SOCKET_EVENTS,
+    WEBRTC_CONNECTION_CONFIG,
+    CONTENT_MODERATION_INTERVAL,
+    MAX_CHAT_MESSAGES,
+} from "../constants/constants";
+import { useSocket } from "./SocketProvider";
 
 const PeerConnectionContext = createContext();
 
-const configuration = {
-    iceServers: [
-        { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
-    ],
-};
-
 export const PeerConnectionProvider = ({ children }) => {
-    const socketRef = useRef(null);
-    const peerConnectionRef = useRef(null);
-    const partnerIdRef = useRef(null);
-    const [isLoading, setIsLoading] = useState(false);
+    const { socket, emitSocketEvent } = useSocket();
 
-    const [localMedia, setLocalMedia] = useState(null);
-    const [remoteMedia, setRemoteMedia] = useState(null);
-    const [chats, setChats] = useState([]);
+    const peerConnectionRef = useRef(null); // reference to the webrtc connection
+    const partnerIdRef = useRef(null); // reference to the partner's id
+    const [isLoading, setIsLoading] = useState(false); // to track the loading state
 
-    const [onlinePeerCount, setOnlinePeerCount] = useState(0);
+    const [localMedia, setLocalMedia] = useState(null); // local media (audio and video)
+    const [remoteMedia, setRemoteMedia] = useState(null); // remote media (audio and video)
+    const [chats, setChats] = useState([]); // chat messages
 
-    const initSocket = useCallback(() => {
-        const socket = io(import.meta.env.VITE_SERVER_URI);
+    const [onlinePeerCount, setOnlinePeerCount] = useState(0); // total online peers currently
 
-        socketRef.current = socket;
-    }, []);
+    const nsfwjsModelRef = useRef(null); // nsfwjs model reference
 
-    const emitSocketEvent = useCallback(
-        async (event, data = {}) => {
-            return new Promise((resolve, reject) => {
-                socketRef.current.emit(event, data, (response) => {
-                    if (response.success) resolve(response);
-                    else reject(new Error(response.error || "Unknown error"));
-                });
-            });
-        },
-        [socketRef.current]
-    );
-
+    // to get local media (audio and video)
     const getLocalMedia = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -59,113 +45,144 @@ export const PeerConnectionProvider = ({ children }) => {
             setLocalMedia(stream);
         } catch (error) {
             console.error("Error in getting local media:", error);
+
+            if (error.name === "NotAllowedError") {
+                toast.error("Permission denied to access media devices.");
+            } else {
+                toast.error("Error in accessing media devices.");
+            }
         }
     }, []);
 
+    // master function to connect
     const getPartner = useCallback(async () => {
-        if (!socketRef.current) initSocket();
-        if (!localMedia) await getLocalMedia();
+        try {
+            if (!socket || socket.disconnected) return;
+            if (!localMedia) await getLocalMedia();
 
-        setIsLoading(true);
+            setIsLoading(true);
 
-        if (peerConnectionRef.current) peerConnectionRef.current.close();
+            await emitSocketEvent(SOCKET_EVENTS.DISCONNECTED);
 
-        peerConnectionRef.current = null;
-        partnerIdRef.current = null;
-        setRemoteMedia(null);
-        setChats([]);
+            if (peerConnectionRef.current) peerConnectionRef.current.close();
 
-        await emitSocketEvent("getPartner");
-    }, [
-        socketRef.current,
-        initSocket,
-        localMedia,
-        getLocalMedia,
-        peerConnectionRef.current,
-        emitSocketEvent,
-    ]);
+            peerConnectionRef.current = null;
+            partnerIdRef.current = null;
+            setRemoteMedia(null);
+            setChats([]);
 
-    const leave = useCallback(() => {
-        // if (socketRef.current) socketRef.current.disconnect();
-        if (peerConnectionRef.current) peerConnectionRef.current.close();
-        if (localMedia) localMedia.getTracks().forEach((track) => track.stop());
+            await emitSocketEvent(SOCKET_EVENTS.GET_PARTNER);
+        } catch (error) {
+            console.error("Error in getting partner:", error);
+            toast.error("Error in connecting. Please try again.");
+        }
+    }, [socket, localMedia, getLocalMedia, emitSocketEvent]);
 
-        // socketRef.current = null;
-        peerConnectionRef.current = null;
-        setLocalMedia(null);
-        setRemoteMedia(null);
-        setChats([]);
-        setIsLoading(false);
-        partnerIdRef.current = null;
-        setOnlinePeerCount(0);
-    }, [localMedia, peerConnectionRef.current, socketRef.current]);
+    // to leave the current connection
+    const leavePartner = useCallback(async () => {
+        try {
+            if (peerConnectionRef.current) peerConnectionRef.current.close();
+            if (localMedia)
+                localMedia.getTracks().forEach((track) => track.stop());
+            if (remoteMedia)
+                remoteMedia.getTracks().forEach((track) => track.stop());
 
+            peerConnectionRef.current = null;
+            setLocalMedia(null);
+            setRemoteMedia(null);
+            setChats([]);
+            setIsLoading(false);
+            partnerIdRef.current = null;
+        } catch (error) {
+            console.error("Error in leaving:", error);
+        }
+    }, [localMedia, remoteMedia]);
+
+    // to send chat messages
     const sendChat = useCallback(
         async (text) => {
-            if (!partnerIdRef.current) return;
+            try {
+                if (!partnerIdRef.current) return;
 
-            setChats((prev) => [
-                ...prev,
-                {
-                    isLocal: true,
+                setChats((prev) => {
+                    const newChats = [...prev, { isLocal: true, text }];
+                    return newChats.slice(
+                        Math.max(newChats.length - MAX_CHAT_MESSAGES, 0)
+                    );
+                });
+
+                await emitSocketEvent(SOCKET_EVENTS.CHAT, {
                     text,
-                },
-            ]);
-
-            await emitSocketEvent("chat", {
-                text,
-                targetId: partnerIdRef.current,
-            });
+                    targetId: partnerIdRef.current,
+                });
+            } catch (error) {
+                console.error("Error in sending chat:", error);
+                toast.error("Error in sending chat. Please try again.");
+            }
         },
-        [partnerIdRef.current, emitSocketEvent]
+        [emitSocketEvent]
     );
 
-    const moderateLocalMedia = useCallback(async () => {
-        if (!localMedia) return;
-
-        const localVideo = document.getElementById("localVideo");
-
-        const model = await nsfwjs.load(
-            `${window.location.origin}/nsfwjs/models/inception_v3/model.json`,
-            { size: 299 }
-        );
-
-        const interval = setInterval(async () => {
-            // Classify the image
-            const predictions = await model.classify(localVideo);
-            console.log(predictions);
-            let isInAppropriate = false;
-
-            predictions.forEach((prediction) => {
-                if (
-                    prediction.className === "Porn" &&
-                    prediction.probability > 0.6
-                ) {
-                    isInAppropriate = true;
-                    return;
+    // to load the NSFWJS model
+    const loadNSFWJSModel = useCallback(async () => {
+        try {
+            const model = await nsfwjs.load(
+                `${window.location.origin}/nsfwjs/models/mobilenet_v2_mid/model.json`,
+                {
+                    type: "graph",
                 }
-            });
+            );
 
-            if (isInAppropriate) {
-                // inappropriate content detected
-                leave();
+            nsfwjsModelRef.current = model;
+        } catch (error) {
+            console.error("Error in loading NSFWJS model:", error);
+        }
+    }, []);
 
-                alert("Inappropriate content detected.");
+    // to moderate the local media for inappropriate content using NSFWJS
+    const moderateLocalMedia = useCallback(async () => {
+        try {
+            if (!localMedia) return;
 
-                clearInterval(interval);
-            }
-        }, 5000);
+            const localVideo = document.getElementById("localVideo");
 
-        return interval;
-    }, [localMedia, emitSocketEvent, leave]);
+            if (!nsfwjsModelRef.current) await loadNSFWJSModel();
 
-    // socket event handler
+            const interval = setInterval(async () => {
+                // Classify the image
+                const predictions = await nsfwjsModelRef.current.classify(
+                    localVideo
+                );
+
+                const isInappropriate = predictions.some(
+                    (prediction) =>
+                        prediction.className === "Porn" &&
+                        prediction.probability > 0.9
+                );
+
+                if (isInappropriate) {
+                    // inappropriate content detected
+                    leavePartner();
+                    alert("Inappropriate content detected.");
+                    clearInterval(interval);
+                }
+            }, CONTENT_MODERATION_INTERVAL);
+
+            return interval;
+        } catch (error) {
+            console.error("Error in moderating local media:", error);
+        }
+    }, [localMedia, leavePartner]);
+
+    // socket event handlers
     const handlePartnerFound = useCallback(
-        async ({ partnerId }) => {
+        ({ partnerId }) => {
+            if (!isLoading) return;
+
             partnerIdRef.current = partnerId;
 
             // create RTCPeerConnection
-            const pc = new RTCPeerConnection(configuration);
+            const pc = new RTCPeerConnection(WEBRTC_CONNECTION_CONFIG);
             peerConnectionRef.current = pc;
 
             pc.onicecandidate = pcEventIceCandidate;
@@ -182,68 +199,81 @@ export const PeerConnectionProvider = ({ children }) => {
     );
 
     const handleGetOffer = useCallback(async () => {
-        if (!partnerIdRef.current || !peerConnectionRef.current) return;
+        try {
+            if (!partnerIdRef.current || !peerConnectionRef.current) return;
 
-        const offer = await peerConnectionRef.current.createOffer();
-        await peerConnectionRef.current.setLocalDescription(offer);
+            const offer = await peerConnectionRef.current.createOffer();
+            await peerConnectionRef.current.setLocalDescription(offer);
 
-        await emitSocketEvent("offer", {
-            offer,
-            targetId: partnerIdRef.current,
-        });
-    }, [partnerIdRef.current, peerConnectionRef.current, emitSocketEvent]);
+            await emitSocketEvent(SOCKET_EVENTS.OFFER, {
+                offer,
+                targetId: partnerIdRef.current,
+            });
+        } catch (error) {
+            console.error("Error in getting offer:", error);
+            toast.error("Error in connecting. Please try again.");
+        }
+    }, [emitSocketEvent]);
 
     const handleOffer = useCallback(
         async ({ offer }) => {
-            if (!partnerIdRef.current || !peerConnectionRef.current) return;
+            try {
+                if (!peerConnectionRef.current) return;
 
-            await peerConnectionRef.current.setRemoteDescription(
-                new RTCSessionDescription(offer)
-            );
+                await peerConnectionRef.current.setRemoteDescription(
+                    new RTCSessionDescription(offer)
+                );
 
-            const answer = await peerConnectionRef.current.createAnswer();
-            await peerConnectionRef.current.setLocalDescription(answer);
+                const answer = await peerConnectionRef.current.createAnswer();
+                await peerConnectionRef.current.setLocalDescription(answer);
 
-            await emitSocketEvent("answer", {
-                answer,
-                targetId: partnerIdRef.current,
-            });
+                await emitSocketEvent(SOCKET_EVENTS.ANSWER, {
+                    answer,
+                    targetId: partnerIdRef.current,
+                });
+            } catch (error) {
+                console.error("Error in handling offer:", error);
+                toast.error("Error in connecting. Please try again.");
+            }
         },
-        [partnerIdRef.current, peerConnectionRef.current, emitSocketEvent]
+        [emitSocketEvent]
     );
 
-    const handleAnswer = useCallback(
-        async ({ answer }) => {
-            if (!partnerIdRef.current || !peerConnectionRef.current) return;
+    const handleAnswer = useCallback(async ({ answer }) => {
+        try {
+            if (!peerConnectionRef.current) return;
 
             await peerConnectionRef.current.setRemoteDescription(
                 new RTCSessionDescription(answer)
             );
-        },
-        [partnerIdRef.current, peerConnectionRef.current]
-    );
+        } catch (error) {
+            console.error("Error in handling answer:", error);
+            toast.error("Error in connecting. Please try again.");
+        }
+    }, []);
 
-    const handleIceCandidate = useCallback(
-        async ({ candidate }) => {
-            if (!partnerIdRef.current || !peerConnectionRef.current) return;
+    const handleIceCandidate = useCallback(async ({ candidate }) => {
+        try {
+            if (!peerConnectionRef.current) return;
 
             if (candidate) {
                 await peerConnectionRef.current.addIceCandidate(candidate);
             }
-        },
-        [partnerIdRef.current, peerConnectionRef.current]
-    );
+        } catch (error) {
+            console.error("Error in handling ICE candidate:", error);
+            toast.error("Error in connecting. Please try again.");
+        }
+    }, []);
 
     const handleChat = useCallback(({ text }) => {
-        if (text) {
-            setChats((prev) => [
-                ...prev,
-                {
-                    isLocal: false,
-                    text,
-                },
-            ]);
-        }
+        if (!text) return;
+
+        setChats((prev) => {
+            const newChats = [...prev, { isLocal: false, text }];
+            return newChats.slice(
+                Math.max(newChats.length - MAX_CHAT_MESSAGES, 0)
+            );
+        });
     }, []);
 
     const handleOnlinePeerCount = useCallback(({ count }) => {
@@ -255,72 +285,89 @@ export const PeerConnectionProvider = ({ children }) => {
     }, [getPartner]);
 
     // peer connection event handlers
+    // when the local peer has an ICE candidate
     const pcEventIceCandidate = useCallback(
         async (event) => {
-            if (partnerIdRef.current && event.candidate) {
-                await emitSocketEvent("iceCandidate", {
-                    candidate: event.candidate,
-                    targetId: partnerIdRef.current,
-                });
+            try {
+                if (partnerIdRef.current && event.candidate) {
+                    await emitSocketEvent(SOCKET_EVENTS.ICE_CANDIDATE, {
+                        candidate: event.candidate,
+                        targetId: partnerIdRef.current,
+                    });
+                }
+            } catch (error) {
+                console.error("Error in sending ICE candidate:", error);
+                toast.error("Error in connecting. Please try again.");
             }
         },
-        [partnerIdRef.current, emitSocketEvent]
+        [emitSocketEvent]
     );
 
+    // when the local peer receives a remote stream
     const pcEventTrack = useCallback(async (event) => {
         const [remoteStream] = event.streams;
         setRemoteMedia(remoteStream);
     }, []);
 
+    // when the local peer connection state changes
     const pcEventConnectionStateChange = useCallback(async () => {
-        const connectionState = peerConnectionRef.current.connectionState;
+        const connectionState = peerConnectionRef.current?.connectionState;
 
-        if (connectionState === "connected") {
-            emitSocketEvent("connected", { partnerId: partnerIdRef.current });
+        switch (connectionState) {
+            case "connected": {
+                setIsLoading(false);
+                emitSocketEvent(SOCKET_EVENTS.CONNECTED, {
+                    partnerId: partnerIdRef.current,
+                });
 
-            setIsLoading(false);
-        } else if (connectionState === "disconnected") {
-            emitSocketEvent("disconnected");
+                break;
+            }
+            case "disconnected":
+            case "failed":
+            case "closed": {
+                console.warn("Connection lost. Attempting to reconnect...");
+                getPartner();
 
-            getPartner();
+                break;
+            }
+            default:
+                break;
         }
-    }, [
-        peerConnectionRef.current,
-        partnerIdRef.current,
-        emitSocketEvent,
-        getPartner,
-    ]);
+    }, [emitSocketEvent, getPartner]);
 
     // socket event listeners
     useEffect(() => {
-        if (!socketRef.current) return;
+        if (!socket) return;
 
-        socketRef.current.on("partnerFound", handlePartnerFound);
-        socketRef.current.on("getOffer", handleGetOffer);
-        socketRef.current.on("offer", handleOffer);
-        socketRef.current.on("answer", handleAnswer);
-        socketRef.current.on("iceCandidate", handleIceCandidate);
-        socketRef.current.on("chat", handleChat);
-        socketRef.current.on("onlinePeerCount", handleOnlinePeerCount);
-        socketRef.current.on("partnerDisconnected", handlePartnerDisconnected);
+        socket.on(SOCKET_EVENTS.PARTNER_FOUND, handlePartnerFound);
+        socket.on(SOCKET_EVENTS.GET_OFFER, handleGetOffer);
+        socket.on(SOCKET_EVENTS.OFFER, handleOffer);
+        socket.on(SOCKET_EVENTS.ANSWER, handleAnswer);
+        socket.on(SOCKET_EVENTS.ICE_CANDIDATE, handleIceCandidate);
+        socket.on(SOCKET_EVENTS.CHAT, handleChat);
+        socket.on(SOCKET_EVENTS.ONLINE_PEER_COUNT, handleOnlinePeerCount);
+        socket.on(
+            SOCKET_EVENTS.PARTNER_DISCONNECTED,
+            handlePartnerDisconnected
+        );
 
         return () => {
-            if (!socketRef.current) return;
+            if (!socket) return;
 
-            socketRef.current.off("partnerFound", handlePartnerFound);
-            socketRef.current.off("getOffer", handleGetOffer);
-            socketRef.current.off("offer", handleOffer);
-            socketRef.current.off("answer", handleAnswer);
-            socketRef.current.off("iceCandidate", handleIceCandidate);
-            socketRef.current.off("chat", handleChat);
-            socketRef.current.off("onlinePeerCount", handleOnlinePeerCount);
-            socketRef.current.off(
-                "partnerDisconnected",
+            socket.off(SOCKET_EVENTS.PARTNER_FOUND, handlePartnerFound);
+            socket.off(SOCKET_EVENTS.GET_OFFER, handleGetOffer);
+            socket.off(SOCKET_EVENTS.OFFER, handleOffer);
+            socket.off(SOCKET_EVENTS.ANSWER, handleAnswer);
+            socket.off(SOCKET_EVENTS.ICE_CANDIDATE, handleIceCandidate);
+            socket.off(SOCKET_EVENTS.CHAT, handleChat);
+            socket.off(SOCKET_EVENTS.ONLINE_PEER_COUNT, handleOnlinePeerCount);
+            socket.off(
+                SOCKET_EVENTS.PARTNER_DISCONNECTED,
                 handlePartnerDisconnected
             );
         };
     }, [
-        socketRef.current,
+        socket,
         handlePartnerFound,
         handleGetOffer,
         handleOffer,
@@ -340,11 +387,30 @@ export const PeerConnectionProvider = ({ children }) => {
         return () => clearInterval(interval);
     }, [localMedia, moderateLocalMedia]);
 
+    // cleanup
+    useEffect(() => {
+        return () => {
+            if (peerConnectionRef.current) peerConnectionRef.current.close();
+            if (localMedia)
+                localMedia.getTracks().forEach((track) => track.stop());
+            if (remoteMedia)
+                remoteMedia.getTracks().forEach((track) => track.stop());
+
+            peerConnectionRef.current = null;
+            setLocalMedia(null);
+            setRemoteMedia(null);
+            setChats([]);
+            setIsLoading(false);
+            partnerIdRef.current = null;
+            setOnlinePeerCount(0);
+            nsfwjsModelRef.current = null;
+        };
+    }, []);
+
     const contextValue = useMemo(
         () => ({
-            socketRef,
             getPartner,
-            leave,
+            leavePartner,
             localMedia,
             remoteMedia,
             isLoading,
@@ -354,9 +420,8 @@ export const PeerConnectionProvider = ({ children }) => {
             onlinePeerCount,
         }),
         [
-            socketRef,
             getPartner,
-            leave,
+            leavePartner,
             localMedia,
             remoteMedia,
             isLoading,
@@ -374,4 +439,14 @@ export const PeerConnectionProvider = ({ children }) => {
     );
 };
 
-export const usePeerConnection = () => useContext(PeerConnectionContext);
+export const usePeerConnection = () => {
+    const context = useContext(PeerConnectionContext);
+
+    if (!context) {
+        throw new Error(
+            "usePeerConnection must be used within PeerConnectionProvider"
+        );
+    }
+
+    return context;
+};
