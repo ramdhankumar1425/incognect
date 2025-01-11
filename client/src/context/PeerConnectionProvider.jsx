@@ -7,6 +7,7 @@ import {
     useRef,
     useState,
 } from "react";
+import { io } from "socket.io-client";
 import * as nsfwjs from "nsfwjs";
 
 const PeerConnectionContext = createContext();
@@ -30,9 +31,7 @@ export const PeerConnectionProvider = ({ children }) => {
 
     const [onlinePeerCount, setOnlinePeerCount] = useState(0);
 
-    const initSocket = useCallback(async () => {
-        const { io } = await import("socket.io-client");
-
+    const initSocket = useCallback(() => {
         const socket = io(import.meta.env.VITE_SERVER_URI);
 
         socketRef.current = socket;
@@ -127,19 +126,20 @@ export const PeerConnectionProvider = ({ children }) => {
         const localVideo = document.getElementById("localVideo");
 
         const model = await nsfwjs.load(
-            `${window.location.origin}/nsfwjs/models/mobilenet_v2/model.json`
+            `${window.location.origin}/nsfwjs/models/inception_v3/model.json`,
+            { size: 299 }
         );
 
         const interval = setInterval(async () => {
             // Classify the image
             const predictions = await model.classify(localVideo);
-
+            console.log(predictions);
             let isInAppropriate = false;
 
             predictions.forEach((prediction) => {
                 if (
                     prediction.className === "Porn" &&
-                    prediction.probability > 0.8
+                    prediction.probability > 0.6
                 ) {
                     isInAppropriate = true;
                     return;
@@ -151,6 +151,8 @@ export const PeerConnectionProvider = ({ children }) => {
                 leave();
 
                 alert("Inappropriate content detected.");
+
+                clearInterval(interval);
             }
         }, 5000);
 
