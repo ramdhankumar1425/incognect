@@ -172,6 +172,30 @@ const handleChat = async (io, socket, data, cb) => {
     }
 };
 
+const handleEmoji = async (io, socket, data, cb) => {
+    try {
+        const { emoji, targetId } = data;
+
+        if (!emoji || !targetId) {
+            cb({
+                success: false,
+                error: new Error("Invalid emoji or targetId"),
+            });
+            return;
+        }
+
+        io.to(targetId).emit("emoji", { emoji });
+
+        cb({
+            success: true,
+        });
+    } catch (error) {
+        console.error("Error in sending emoji:", error);
+
+        cb({ success: false, error });
+    }
+};
+
 module.exports = {
     handleGetPartner,
     handleOffer,
@@ -180,4 +204,5 @@ module.exports = {
     handleConnected,
     handleDisconnected,
     handleChat,
+    handleEmoji,
 };

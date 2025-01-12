@@ -8,6 +8,7 @@ const {
     handleConnected,
     handleDisconnected,
     handleChat,
+    handleEmoji,
 } = require("../controllers/socket.controllers");
 
 const socketHandler = (io) => {
@@ -39,6 +40,8 @@ const socketHandler = (io) => {
         );
 
         socket.on("chat", (data, cb) => handleChat(io, socket, data, cb));
+
+        socket.on("emoji", (data, cb) => handleEmoji(io, socket, data, cb));
 
         socket.on("disconnect", () => {
             if (peerStore.has(socket.id)) peerStore.delete(socket.id);

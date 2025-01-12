@@ -1,4 +1,4 @@
-import React, { lazy } from "react";
+import React from "react";
 import Chat from "../components/Chat";
 import Stream from "../components/Stream";
 import { PeerConnectionProvider } from "../context/PeerConnectionProvider";

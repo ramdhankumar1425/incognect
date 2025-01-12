@@ -9,13 +9,13 @@ import {
 } from "react";
 import * as nsfwjs from "nsfwjs";
 import { toast } from "sonner";
+import { useSocket } from "./SocketProvider";
 import {
     SOCKET_EVENTS,
     WEBRTC_CONNECTION_CONFIG,
     CONTENT_MODERATION_INTERVAL,
     MAX_CHAT_MESSAGES,
 } from "../constants/constants";
-import { useSocket } from "./SocketProvider";
 
 const PeerConnectionContext = createContext();
 
@@ -31,6 +31,7 @@ export const PeerConnectionProvider = ({ children }) => {
     const [chats, setChats] = useState([]); // chat messages
 
     const [onlinePeerCount, setOnlinePeerCount] = useState(0); // total online peers currently
+    const [emoji, setEmoji] = useState(""); // emoji
 
     const nsfwjsModelRef = useRef(null); // nsfwjs model reference
 
@@ -65,6 +66,8 @@ export const PeerConnectionProvider = ({ children }) => {
             await emitSocketEvent(SOCKET_EVENTS.DISCONNECTED);
 
             if (peerConnectionRef.current) peerConnectionRef.current.close();
+            if (remoteMedia)
+                remoteMedia.getTracks().forEach((track) => track.stop());
 
             peerConnectionRef.current = null;
             partnerIdRef.current = null;
@@ -82,13 +85,12 @@ export const PeerConnectionProvider = ({ children }) => {
     const leavePartner = useCallback(async () => {
         try {
             if (peerConnectionRef.current) peerConnectionRef.current.close();
-            if (localMedia)
-                localMedia.getTracks().forEach((track) => track.stop());
             if (remoteMedia)
                 remoteMedia.getTracks().forEach((track) => track.stop());
 
+            emitSocketEvent(SOCKET_EVENTS.DISCONNECTED);
+
             peerConnectionRef.current = null;
-            setLocalMedia(null);
             setRemoteMedia(null);
             setChats([]);
             setIsLoading(false);
@@ -96,7 +98,7 @@ export const PeerConnectionProvider = ({ children }) => {
         } catch (error) {
             console.error("Error in leaving:", error);
         }
-    }, [localMedia, remoteMedia]);
+    }, [localMedia, remoteMedia, emitSocketEvent]);
 
     // to send chat messages
     const sendChat = useCallback(
@@ -118,6 +120,24 @@ export const PeerConnectionProvider = ({ children }) => {
             } catch (error) {
                 console.error("Error in sending chat:", error);
                 toast.error("Error in sending chat. Please try again.");
+            }
+        },
+        [emitSocketEvent]
+    );
+
+    // to send emoji
+    const sendEmoji = useCallback(
+        async (emoji) => {
+            try {
+                if (!partnerIdRef.current) return;
+
+                await emitSocketEvent(SOCKET_EVENTS.EMOJI, {
+                    emoji,
+                    targetId: partnerIdRef.current,
+                });
+            } catch (error) {
+                console.error("Error in sending emoji:", error);
+                toast.error("Error in sending emoji. Please try again.");
             }
         },
         [emitSocketEvent]
@@ -177,7 +197,7 @@ export const PeerConnectionProvider = ({ children }) => {
     // socket event handlers
     const handlePartnerFound = useCallback(
         ({ partnerId }) => {
-            if (!isLoading) return;
+            if (!partnerId) return;
 
             partnerIdRef.current = partnerId;
 
@@ -276,6 +296,14 @@ export const PeerConnectionProvider = ({ children }) => {
         });
     }, []);
 
+    const handleEmoji = useCallback(({ emoji }) => {
+        if (!emoji) return;
+
+        setEmoji(emoji);
+
+        setTimeout(() => setEmoji(""), 1500);
+    }, []);
+
     const handleOnlinePeerCount = useCallback(({ count }) => {
         if (count) setOnlinePeerCount(count);
     }, []);
@@ -302,7 +330,8 @@ export const PeerConnectionProvider = ({ children }) => {
     // when the local peer receives a remote stream
     const pcEventTrack = useCallback(async (event) => {
         const [remoteStream] = event.streams;
-        setRemoteMedia(remoteStream);
+
+        if (remoteStream) setRemoteMedia(remoteStream);
     }, []);
 
     // when the local peer connection state changes
@@ -318,12 +347,24 @@ export const PeerConnectionProvider = ({ children }) => {
 
                 break;
             }
-            case "disconnected":
-            case "failed":
-            case "closed": {
-                console.warn("Connection lost. Attempting to reconnect...");
-                getPartner();
+            case "disconnected": {
+                console.warn(
+                    "Connection lost temporarily. Attempting to reconnect..."
+                );
 
+                setTimeout(() => getPartner(), 2000);
+                break;
+            }
+            case "failed": {
+                console.warn("Connection failed. Attempting to reconnect...");
+
+                getPartner();
+                break;
+            }
+            case "closed": {
+                console.warn("Connection closed. Cleaning up resources...");
+
+                getPartner();
                 break;
             }
             default:
@@ -341,6 +382,7 @@ export const PeerConnectionProvider = ({ children }) => {
         socket.on(SOCKET_EVENTS.ANSWER, handleAnswer);
         socket.on(SOCKET_EVENTS.ICE_CANDIDATE, handleIceCandidate);
         socket.on(SOCKET_EVENTS.CHAT, handleChat);
+        socket.on(SOCKET_EVENTS.EMOJI, handleEmoji);
         socket.on(SOCKET_EVENTS.ONLINE_PEER_COUNT, handleOnlinePeerCount);
 
         return () => {
@@ -352,6 +394,7 @@ export const PeerConnectionProvider = ({ children }) => {
             socket.off(SOCKET_EVENTS.ANSWER, handleAnswer);
             socket.off(SOCKET_EVENTS.ICE_CANDIDATE, handleIceCandidate);
             socket.off(SOCKET_EVENTS.CHAT, handleChat);
+            socket.off(SOCKET_EVENTS.EMOJI, handleEmoji);
             socket.off(SOCKET_EVENTS.ONLINE_PEER_COUNT, handleOnlinePeerCount);
         };
     }, [
@@ -362,6 +405,7 @@ export const PeerConnectionProvider = ({ children }) => {
         handleAnswer,
         handleIceCandidate,
         handleChat,
+        handleEmoji,
         handleOnlinePeerCount,
     ]);
 
@@ -373,6 +417,18 @@ export const PeerConnectionProvider = ({ children }) => {
 
         return () => clearInterval(interval);
     }, [localMedia, moderateLocalMedia]);
+
+    // keyborad shortcuts
+    useEffect(() => {
+        const handleKeyDown = (event) => {
+            if (event.key === "ArrowRight") getPartner();
+            if (event.key === "ArrowLeft") leavePartner();
+        };
+
+        document.addEventListener("keydown", handleKeyDown);
+
+        return () => document.removeEventListener("keydown", handleKeyDown);
+    }, [getPartner, leavePartner]);
 
     // cleanup
     useEffect(() => {
@@ -403,8 +459,10 @@ export const PeerConnectionProvider = ({ children }) => {
             isLoading,
             chats,
             sendChat,
+            sendEmoji,
             partnerIdRef,
             onlinePeerCount,
+            emoji,
         }),
         [
             getPartner,
@@ -414,8 +472,10 @@ export const PeerConnectionProvider = ({ children }) => {
             isLoading,
             chats,
             sendChat,
+            sendEmoji,
             partnerIdRef,
             onlinePeerCount,
+            emoji,
         ]
     );
 

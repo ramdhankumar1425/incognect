@@ -13,6 +13,7 @@ const SOCKET_EVENTS = {
     ANSWER: "answer",
     ICE_CANDIDATE: "iceCandidate",
     CHAT: "chat",
+    EMOJI: "emoji",
     ONLINE_PEER_COUNT: "onlinePeerCount",
 };
 

@@ -2,6 +2,7 @@ import React from "react";
 import Toolbar from "./Toolbar";
 import { usePeerConnection } from "../context/PeerConnectionProvider";
 import { OrbitProgress } from "react-loading-indicators";
+import Emoji from "./Emoji";
 
 function Stream() {
     const { localMedia, remoteMedia, isLoading, onlinePeerCount } =
@@ -65,6 +66,11 @@ function Stream() {
             {/* Toolbar */}
             <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
                 <Toolbar />
+            </div>
+
+            {/* Emoji */}
+            <div className="absolute bottom-0 right-0">
+                <Emoji />
             </div>
 
             {/* Online peer count */}
