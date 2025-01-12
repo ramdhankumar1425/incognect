@@ -1,4 +1,4 @@
-const peerStore = require("../store/peerStore");
+const peerStore = require("../services/peerStore");
 
 const handleGetPartner = async (io, socket, data, cb) => {
     try {

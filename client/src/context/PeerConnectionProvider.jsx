@@ -280,10 +280,6 @@ export const PeerConnectionProvider = ({ children }) => {
         if (count) setOnlinePeerCount(count);
     }, []);
 
-    const handlePartnerDisconnected = useCallback(() => {
-        getPartner();
-    }, [getPartner]);
-
     // peer connection event handlers
     // when the local peer has an ICE candidate
     const pcEventIceCandidate = useCallback(
@@ -346,10 +342,6 @@ export const PeerConnectionProvider = ({ children }) => {
         socket.on(SOCKET_EVENTS.ICE_CANDIDATE, handleIceCandidate);
         socket.on(SOCKET_EVENTS.CHAT, handleChat);
         socket.on(SOCKET_EVENTS.ONLINE_PEER_COUNT, handleOnlinePeerCount);
-        socket.on(
-            SOCKET_EVENTS.PARTNER_DISCONNECTED,
-            handlePartnerDisconnected
-        );
 
         return () => {
             if (!socket) return;
@@ -361,10 +353,6 @@ export const PeerConnectionProvider = ({ children }) => {
             socket.off(SOCKET_EVENTS.ICE_CANDIDATE, handleIceCandidate);
             socket.off(SOCKET_EVENTS.CHAT, handleChat);
             socket.off(SOCKET_EVENTS.ONLINE_PEER_COUNT, handleOnlinePeerCount);
-            socket.off(
-                SOCKET_EVENTS.PARTNER_DISCONNECTED,
-                handlePartnerDisconnected
-            );
         };
     }, [
         socket,
@@ -375,7 +363,6 @@ export const PeerConnectionProvider = ({ children }) => {
         handleIceCandidate,
         handleChat,
         handleOnlinePeerCount,
-        handlePartnerDisconnected,
     ]);
 
     // to moderate the video that is being shared

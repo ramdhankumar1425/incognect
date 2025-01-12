@@ -1,7 +1,7 @@
 require("dotenv").config();
 const { createServer } = require("http");
 const { Server } = require("socket.io");
-const socketHandler = require("./socketHandler");
+const socketHandler = require("./services/socket");
 
 const server = createServer();
 const io = new Server(server, {
