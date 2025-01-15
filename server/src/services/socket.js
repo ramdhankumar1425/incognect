@@ -11,6 +11,7 @@ const {
     handleEmoji,
 } = require("../controllers/socket.controllers");
 
+// master socket handler for all socket events
 const socketHandler = (io) => {
     io.on("connection", (socket) => {
         // store the peer
